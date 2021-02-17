@@ -16,7 +16,7 @@ the max expiration hours we have set.
 
 ### Architecture
 
-// TODO
+![Architecture](assets/architecture_stack_janitor.png)
 
 ## Deploy
 
