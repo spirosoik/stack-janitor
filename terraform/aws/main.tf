@@ -67,6 +67,8 @@ resource "aws_lambda_function" "janitor" {
 
   environment {
     variables = {
+      JANITOR_SENTRY_ENABLED       = var.sentry_enabled
+      JANITOR_SENTRY_DSN           = var.sentry_dsn
       JANITOR_ENVIRONMENT          = var.environment
       JANITOR_MAX_EXPIRATION_HOURS = var.max_expiration_days
       JANITOR_TAG_KEY              = var.filter_tag_key

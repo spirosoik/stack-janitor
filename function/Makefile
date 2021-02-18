@@ -8,7 +8,7 @@ all: build package
 
 build: ## Build for development only
 	@echo "Building binary..."
-	@GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(LDFLAGS) -o ./$(OUTPUT}/$(EXECUTABLE) ./
+	@GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(LDFLAGS) -o ./$(OUTPUT)/$(EXECUTABLE) ./
 
 clean: ## Clean
 	@echo "Cleaning..."

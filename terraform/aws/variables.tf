@@ -45,6 +45,16 @@ variable "filter_tag_value" {
   description = "The value name of the tag you want to add as a rule to be checked for the provided key"
 }
 
+variable "sentry_enabled" {
+  type        = bool
+  description = "The sentry flag to enable track errors"
+}
+
+variable "sentry_dsn" {
+  type        = string
+  description = "The sentry DSN secret to send the tracked errors"
+}
+
 variable "janitor_lambda_schedule" {
   type        = string
   default     = "cron(0 * * * *)"

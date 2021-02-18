@@ -1,6 +1,8 @@
 package main
 
 import (
+	"time"
+
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
@@ -10,9 +12,18 @@ import (
 // of the running service
 type config struct {
 	Debug              bool
-	TagKey             string `mapstructure:"tag_key"`
-	TagValue           string `mapstructure:"tag_value"`
-	MaxExpirationHours *int   `mapstructure:"max_expiration_hours"`
+	Environment        string
+	TagKey             string        `mapstructure:"tag_key"`
+	TagValue           string        `mapstructure:"tag_value"`
+	MaxExpirationHours time.Duration `mapstructure:"max_expiration_hours"`
+	Sentry             Sentry
+}
+
+// Sentry configuration to enable dna disable
+// accordingly based on the provided DSN
+type Sentry struct {
+	Enabled bool
+	DSN     string `mapstructure:"dsn"`
 }
 
 // Validate makes sure that the config makes sense
@@ -22,9 +33,6 @@ func (c *config) Validate() error {
 	}
 	if c.TagValue == "" {
 		return errors.New("Config: tag value is required")
-	}
-	if &c.MaxExpirationHours == nil {
-		return errors.New("Config: expiration time is required")
 	}
 	return nil
 }
@@ -37,7 +45,7 @@ func init() {
 	defaults := map[string]interface{}{
 		"debug":                true,
 		"environment":          "dev",
-		"max_expiration_hours": 1,
+		"max_expiration_hours": "1h",
 		"tag_key":              nil,
 		"tag_value":            nil,
 	}

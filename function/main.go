@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
@@ -10,47 +11,89 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/cloudformation"
+	"github.com/getsentry/sentry-go"
+	"github.com/makasim/sentryhook"
+	"github.com/mattn/go-isatty"
 	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 )
 
+// cfg global configuration across the whole
+// services
 var cfg config
 
+// GitSHA is set during build
+var GitSHA = "<not set>"
+
+// logger
+var logger *logrus.Logger
+
 func main() {
-	err := LoadConfig(log.New())
-	if err != nil {
-		log.WithError(err).Error("Unable to load config")
+	logger = logrus.New()
+	logger.Out = os.Stdout
+	logger.Formatter = &logrus.TextFormatter{
+		DisableColors: !isatty.IsTerminal(os.Stdout.Fd()),
+		FullTimestamp: true,
+	}
+	logger.WithField("git_sha", GitSHA).Info("Current version")
+
+	// load config
+	if err := LoadConfig(logger); err != nil {
+		logger.WithError(err).Error("Unable to load config")
 		os.Exit(1)
 	}
+
+	// sentry setup
+	if cfg.Sentry.Enabled {
+		logger.AddHook(sentryhook.New([]logrus.Level{logrus.PanicLevel, logrus.FatalLevel, logrus.ErrorLevel}))
+		defer sentry.Flush(time.Second * 5)
+		defer sentry.Recover()
+		err := sentry.Init(sentry.ClientOptions{
+			Release:          fmt.Sprintf("stack-janitor@%s", GitSHA),
+			Dsn:              cfg.Sentry.DSN,
+			AttachStacktrace: true,
+			Environment:      cfg.Environment,
+			Debug:            cfg.Debug,
+		})
+		if err != nil {
+			logger.WithError(err).Error("Sentry.Init failed")
+			os.Exit(1)
+		}
+	}
+
+	// if it's debug run locally
 	if cfg.Debug {
 		handler(context.Background(), events.CloudWatchEvent{})
 		return
 	}
+
+	// start handler
 	lambda.Start(handler)
 }
 
-func handler(ctx context.Context, cloudWatchEvent events.CloudWatchEvent) error {
+func handler(ctx context.Context, cloudWatchEvent events.CloudWatchEvent) {
 	stacks, err := fetchStacks()
 	if err != nil {
-		return err
+		logger.WithError(err).Error()
+		return
 	}
 
 	filteredStacks, err := filterStacks(stacks, cfg.TagKey, cfg.TagValue, cfg.MaxExpirationHours)
 	if err != nil {
-		return err
+		logger.WithError(err).Error()
+		return
 	}
 
 	err = forceDelete(filteredStacks)
 	if err != nil {
-		return err
+		logger.WithError(err).Error()
 	}
-	return nil
 }
 
 // fetchStacks fetches the cloudformation stacks
 func fetchStacks() ([]string, error) {
-	log.Info("Collecting cloudformation stacks...")
-	sess, err := session.NewSession(&aws.Config{})
+	logger.Info("Collecting cloudformation stacks...")
+	sess, err := session.NewSession()
 	if err != nil {
 		return []string{}, errors.Wrap(err, "session.NewSession")
 	}
@@ -74,11 +117,11 @@ func fetchStacks() ([]string, error) {
 }
 
 // filterStacks filter tasks based on rule we give in map string
-func filterStacks(stacks []string, tagKey string, tagValue string, maxTime *int) ([]string, error) {
-	log.Info("Filtering cloudformation stacks...")
-	sess, err := session.NewSession(&aws.Config{})
+func filterStacks(stacks []string, tagKey string, tagValue string, maxTime time.Duration) ([]string, error) {
+	logger.Info("Filtering cloudformation stacks...")
+	sess, err := session.NewSession()
 	if err != nil {
-		return []string{}, errors.Wrap(err, "session.NewSession")
+		return nil, errors.Wrap(err, "session.NewSession")
 	}
 	var filteredNames []string
 	svc := cloudformation.New(sess)
@@ -87,23 +130,26 @@ func filterStacks(stacks []string, tagKey string, tagValue string, maxTime *int)
 			StackName: aws.String(n),
 		})
 		if err != nil {
-			return []string{}, errors.Wrap(err, "svc.DescribeStacks")
+			return nil, errors.Wrap(err, "svc.DescribeStacks")
 		}
 		for _, s := range result.Stacks {
-			elapsedHours := time.Now().Sub(*s.CreationTime).Hours()
-			if ok := find(s.Tags, tagKey, tagValue); ok && elapsedHours >= float64(*maxTime) {
-				filteredNames = append(filteredNames, *s.StackName)
-				log.Info(*s.StackName)
+			if !hasTag(s.Tags, tagKey, tagValue) {
+				continue
 			}
+			elapsedHours := time.Since(*s.CreationTime).Hours()
+			if elapsedHours < maxTime.Hours() {
+				continue
+			}
+			filteredNames = append(filteredNames, aws.StringValue(s.StackName))
 		}
 	}
-	log.Infof("Found %d stacks with the provided tag: %s:%s", len(filteredNames), tagKey, tagValue)
+	logger.Infof("Found %d stacks with the provided tag: %s:%s", len(filteredNames), tagKey, tagValue)
 	return filteredNames, nil
 }
 
 func forceDelete(stacks []string) error {
-	log.Info("Deleting cloudformation stacks...")
-	sess, err := session.NewSession(&aws.Config{})
+	logger.Info("Deleting cloudformation stacks...")
+	sess, err := session.NewSession()
 	if err != nil {
 		return errors.Wrap(err, "session.NewSession")
 	}
@@ -115,16 +161,16 @@ func forceDelete(stacks []string) error {
 			StackName: aws.String(n),
 		})
 		if err != nil {
-			log.WithError(err).Error("Unable to delete stack with name: %s", n)
+			logger.WithError(err).Errorf("Unable to delete stack with name: %s", n)
 		}
 		deletedCounter++
 	}
-	log.Infof("Deleted %d stacks", deletedCounter)
+	logger.Infof("Deleted %d stacks", deletedCounter)
 	return nil
 }
 
 // find searches in a slice if the value exists
-func find(slice []*cloudformation.Tag, tagKey string, tagValue string) bool {
+func hasTag(slice []*cloudformation.Tag, tagKey string, tagValue string) bool {
 	for _, item := range slice {
 		if *item.Key != tagKey {
 			continue
