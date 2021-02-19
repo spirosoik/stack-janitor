@@ -11,12 +11,12 @@ import (
 // config describes the available configuration
 // of the running service
 type config struct {
-	Debug              bool
-	Environment        string
-	TagKey             string        `mapstructure:"tag_key"`
-	TagValue           string        `mapstructure:"tag_value"`
-	MaxExpirationHours time.Duration `mapstructure:"max_expiration_hours"`
-	Sentry             Sentry
+	Debug       bool
+	Environment string
+	TagKey      string        `mapstructure:"tag_key"`
+	TagValue    string        `mapstructure:"tag_value"`
+	MaxAge      time.Duration `mapstructure:"max_age"`
+	Sentry      Sentry
 }
 
 // Sentry configuration to enable dna disable
@@ -43,11 +43,11 @@ func init() {
 	viper.SetEnvPrefix("janitor")
 
 	defaults := map[string]interface{}{
-		"debug":                true,
-		"environment":          "dev",
-		"max_expiration_hours": "1h",
-		"tag_key":              nil,
-		"tag_value":            nil,
+		"debug":       true,
+		"environment": "dev",
+		"max_age":     "1h",
+		"tag_key":     nil,
+		"tag_value":   nil,
 	}
 	for key, value := range defaults {
 		viper.SetDefault(key, value)

@@ -132,8 +132,7 @@ func filterStacks(svc *cloudformation.CloudFormation, stacks []string, cfg confi
 			if !hasTag(s.Tags, cfg.TagKey, cfg.TagValue) {
 				continue
 			}
-			elapsedHours := time.Since(*s.CreationTime).Hours()
-			if elapsedHours < cfg.MaxExpirationHours.Hours() {
+			if time.Since(*s.CreationTime) < cfg.MaxAge {
 				continue
 			}
 			filteredNames = append(filteredNames, aws.StringValue(s.StackName))
