@@ -72,32 +72,33 @@ func main() {
 }
 
 func handler(ctx context.Context, cloudWatchEvent events.CloudWatchEvent) {
-	stacks, err := fetchStacks()
+	sess, err := session.NewSession()
+	if err != nil {
+		logger.WithError(errors.Wrap(err, "session.NewSession")).Error()
+		return
+	}
+	svc := cloudformation.New(sess)
+
+	stacks, err := fetchStacks(svc)
+	if err != nil {
+		logger.WithError(err).Error()
+		return
+	}
+	filteredStacks, err := filterStacks(svc, stacks, cfg)
 	if err != nil {
 		logger.WithError(err).Error()
 		return
 	}
 
-	filteredStacks, err := filterStacks(stacks, cfg.TagKey, cfg.TagValue, cfg.MaxExpirationHours)
-	if err != nil {
-		logger.WithError(err).Error()
-		return
-	}
-
-	err = forceDelete(filteredStacks)
+	err = forceDelete(svc, filteredStacks)
 	if err != nil {
 		logger.WithError(err).Error()
 	}
 }
 
 // fetchStacks fetches the cloudformation stacks
-func fetchStacks() ([]string, error) {
+func fetchStacks(svc *cloudformation.CloudFormation) ([]string, error) {
 	logger.Info("Collecting cloudformation stacks...")
-	sess, err := session.NewSession()
-	if err != nil {
-		return []string{}, errors.Wrap(err, "session.NewSession")
-	}
-	svc := cloudformation.New(sess)
 	result, err := svc.ListStacks(&cloudformation.ListStacksInput{
 		StackStatusFilter: []*string{
 			aws.String(cloudformation.ResourceStatusCreateComplete),
@@ -117,14 +118,9 @@ func fetchStacks() ([]string, error) {
 }
 
 // filterStacks filter tasks based on rule we give in map string
-func filterStacks(stacks []string, tagKey string, tagValue string, maxTime time.Duration) ([]string, error) {
+func filterStacks(svc *cloudformation.CloudFormation, stacks []string, cfg config) ([]string, error) {
 	logger.Info("Filtering cloudformation stacks...")
-	sess, err := session.NewSession()
-	if err != nil {
-		return nil, errors.Wrap(err, "session.NewSession")
-	}
 	var filteredNames []string
-	svc := cloudformation.New(sess)
 	for _, n := range stacks {
 		result, err := svc.DescribeStacks(&cloudformation.DescribeStacksInput{
 			StackName: aws.String(n),
@@ -133,35 +129,30 @@ func filterStacks(stacks []string, tagKey string, tagValue string, maxTime time.
 			return nil, errors.Wrap(err, "svc.DescribeStacks")
 		}
 		for _, s := range result.Stacks {
-			if !hasTag(s.Tags, tagKey, tagValue) {
+			if !hasTag(s.Tags, cfg.TagKey, cfg.TagValue) {
 				continue
 			}
 			elapsedHours := time.Since(*s.CreationTime).Hours()
-			if elapsedHours < maxTime.Hours() {
+			if elapsedHours < cfg.MaxExpirationHours.Hours() {
 				continue
 			}
 			filteredNames = append(filteredNames, aws.StringValue(s.StackName))
 		}
 	}
-	logger.Infof("Found %d stacks with the provided tag: %s:%s", len(filteredNames), tagKey, tagValue)
+	logger.Infof("Found %d stacks with the provided tag: %s:%s", len(filteredNames), cfg.TagKey, cfg.TagValue)
 	return filteredNames, nil
 }
 
-func forceDelete(stacks []string) error {
+func forceDelete(svc *cloudformation.CloudFormation, stacks []string) error {
 	logger.Info("Deleting cloudformation stacks...")
-	sess, err := session.NewSession()
-	if err != nil {
-		return errors.Wrap(err, "session.NewSession")
-	}
-
 	deletedCounter := 0
-	svc := cloudformation.New(sess)
 	for _, n := range stacks {
-		_, err = svc.DeleteStack(&cloudformation.DeleteStackInput{
+		_, err := svc.DeleteStack(&cloudformation.DeleteStackInput{
 			StackName: aws.String(n),
 		})
 		if err != nil {
 			logger.WithError(err).Errorf("Unable to delete stack with name: %s", n)
+			continue
 		}
 		deletedCounter++
 	}
